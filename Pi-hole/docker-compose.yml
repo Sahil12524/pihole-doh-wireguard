@@ -1,0 +1,123 @@
+# configured for 2 core cpu and 4 gb of ram
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    command: >
+      proxy-dns
+      --port 5054
+      --address 0.0.0.0
+      --upstream https://pleaseusecloudflarezerotrust.cloudflare-gateway.com/dns-query
+      --upstream https://1.1.1.1/dns-query
+      --upstream https://1.0.0.1/dns-query
+      --max-upstream-conns 0
+    ports:
+      - "5054:5054/tcp"
+      - "5054:5054/udp"
+    healthcheck:
+      test: ["CMD", "cloudflared", "version"]
+      interval: 1s
+      timeout: 1s
+      retries: 1
+      start_period: 0s
+    restart: unless-stopped
+    networks:
+      core_net:
+        ipv4_address: 10.42.42.3
+        ipv6_address: fdcc:ad94:bacf:61a3::3
+    mem_limit: 512m
+    cpus: 0.5
+
+  pihole:
+    image: pihole/pihole:latest
+    container_name: pihole
+    depends_on:
+      cloudflared:
+        condition: service_healthy
+    environment:
+      TZ: "Asia/Kolkata"
+      WEBPASSWORD: "passwordyoulikeidontcare"
+
+      # DNS
+      DNSMASQ_LISTENING: "all"
+      PIHOLE_DNS_: "10.42.42.3#5054;127.0.0.1"
+      DNS_FQDN_REQUIRED: "false"
+      DNS_BOGUS_PRIV: "false"
+
+      # Performance tuning
+      FTLCONF_MAX_THREADS: "4"
+      FTLCONF_DNSCACHE_SIZE: "1000000"
+      FTLCONF_ANALYZE_ONLY_A_AND_AAAA: "true"
+      FTLCONF_RESOLVE_IPV6: "false"
+      FTLCONF_RATE_LIMIT: "0/0"
+      FTLCONF_REPLY_TIMEOUT: "1"
+      FTLCONF_MAXDBDAYS: "7"
+
+    volumes:
+      - ./etc-pihole:/etc/pihole
+      - ./etc-dnsmasq.d:/etc/dnsmasq.d
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "4443:443/tcp"
+    healthcheck:
+      test: ["CMD-SHELL", "dig +short @127.0.0.1 google.com || exit 1"]
+      interval: 5s
+      timeout: 2s
+      retries: 2
+      start_period: 2s
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    mem_limit: 3g
+
+    networks:
+      core_net:
+        ipv4_address: 10.42.42.2
+        ipv6_address: fdcc:ad94:bacf:61a3::2
+
+  wg-easy:
+    image: ghcr.io/wg-easy/wg-easy:15
+    container_name: wg-easy
+    environment:
+      - INSECURE=true
+    networks:
+      core_net:
+        ipv4_address: 10.42.42.42
+        ipv6_address: fdcc:ad94:bacf:61a3::2a
+    volumes:
+      - etc_wireguard:/etc/wireguard
+      - /lib/modules:/lib/modules:ro
+    ports:
+      - "51820:51820/udp"
+      - "51821:51821/tcp"
+    healthcheck:
+      test: ["CMD-SHELL", "wg show || exit 1"]
+      interval: 5s
+      timeout: 2s
+      retries: 2
+      start_period: 2s
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    sysctls:
+      net.ipv4.ip_forward: 1
+      net.ipv4.conf.all.src_valid_mark: 1
+      net.ipv6.conf.all.disable_ipv6: 0
+      net.ipv6.conf.all.forwarding: 1
+      net.ipv6.conf.default.forwarding: 1
+      net.ipv4.tcp_congestion_control: bbr
+
+volumes:
+  etc_wireguard:
+
+networks:
+  core_net:
+    driver: bridge
+    enable_ipv6: true
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.42.42.0/24
+        - subnet: fdcc:ad94:bacf:61a3::/64
