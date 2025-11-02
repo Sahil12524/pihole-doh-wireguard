@@ -196,6 +196,21 @@ sudo systemctl disable --now power-saver.service
 sudo rm /usr/local/bin/power_saver.sh /etc/systemd/system/power-saver.service
 ```
 
+## Tailscale as a Backup Option
+
+If your ISP uses **CGNAT** or you can’t forward ports for WireGuard,  
+you can optionally add **[Tailscale](https://tailscale.com)** as a backup for remote access.
+
+**What it does:**  
+Tailscale creates a secure, peer-to-peer **mesh VPN** between your devices — like a private LAN that works over the internet.  
+It automatically handles NAT traversal, encryption, and device discovery, so you can reach your Pi-hole and network from anywhere  
+without opening ports or needing a static IP.
+
+> Think of Tailscale as a fallback connection when direct WireGuard access isn’t possible.
+
+You can safely run both **Tailscale** and **WireGuard** together — Tailscale just ensures connectivity,  
+while your Pi-hole + Cloudflared setup continues to handle DNS and filtering.
+
 ---
 
 ## Credits
