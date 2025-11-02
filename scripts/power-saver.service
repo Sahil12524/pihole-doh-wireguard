@@ -1,0 +1,16 @@
+[Unit]
+Description=Auto-pause Docker containers on internet loss and suspend on battery
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/power_saver.sh
+Restart=always
+RestartSec=5
+User=root
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
