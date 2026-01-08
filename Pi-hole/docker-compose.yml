@@ -3,63 +3,45 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: cloudflared
+    network_mode: host
     command: >
       proxy-dns
       --port 5054
       --address 0.0.0.0
       --upstream https://pleaseusecloudflarezerotrust.cloudflare-gateway.com/dns-query
-      --upstream https://1.1.1.1/dns-query
-      --upstream https://1.0.0.1/dns-query
-      --max-upstream-conns 0
-    ports:
-      - "5054:5054/tcp"
-      - "5054:5054/udp"
+      #--upstream https://cloudflare-dns.com/dns-query
+      --max-upstream-conns 50
+
     healthcheck:
       test: ["CMD", "cloudflared", "version"]
       interval: 1s
-      timeout: 1s
-      retries: 1
+      timeout: 3s
+      retries: 5
       start_period: 0s
     restart: unless-stopped
-    networks:
-      core_net:
-        ipv4_address: 10.42.42.3
-        ipv6_address: fdcc:ad94:bacf:61a3::3
     mem_limit: 512m
     cpus: 0.5
 
   pihole:
     image: pihole/pihole:latest
     container_name: pihole
+    network_mode: host
     depends_on:
       cloudflared:
         condition: service_healthy
     environment:
       TZ: "Asia/Kolkata"
-      WEBPASSWORD: "passwordyoulikeidontcare"
 
       # DNS
       DNSMASQ_LISTENING: "all"
-      PIHOLE_DNS_: "10.42.42.3#5054;127.0.0.1"
+      PIHOLE_DNS_: "127.0.0.1#5054"
       DNS_FQDN_REQUIRED: "false"
       DNS_BOGUS_PRIV: "false"
-
-      # Performance tuning
-      FTLCONF_MAX_THREADS: "4"
-      FTLCONF_DNSCACHE_SIZE: "1000000"
-      FTLCONF_ANALYZE_ONLY_A_AND_AAAA: "true"
-      FTLCONF_RESOLVE_IPV6: "false"
-      FTLCONF_RATE_LIMIT: "0/0"
-      FTLCONF_REPLY_TIMEOUT: "1"
-      FTLCONF_MAXDBDAYS: "7"
 
     volumes:
       - ./etc-pihole:/etc/pihole
       - ./etc-dnsmasq.d:/etc/dnsmasq.d
-    ports:
-      - "53:53/tcp"
-      - "53:53/udp"
-      - "4443:443/tcp"
+
     healthcheck:
       test: ["CMD-SHELL", "dig +short @127.0.0.1 google.com || exit 1"]
       interval: 5s
@@ -70,11 +52,6 @@ services:
     cap_add:
       - NET_ADMIN
     mem_limit: 3g
-
-    networks:
-      core_net:
-        ipv4_address: 10.42.42.2
-        ipv6_address: fdcc:ad94:bacf:61a3::2
 
   wg-easy:
     image: ghcr.io/wg-easy/wg-easy:15
