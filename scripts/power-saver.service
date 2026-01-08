@@ -9,6 +9,10 @@ ExecStart=/usr/local/bin/power_saver.sh
 Restart=always
 RestartSec=5
 User=root
+
+# Critical: Ensure all commands (ping, curl, docker, etc) work under systemd
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
 StandardOutput=journal
 StandardError=journal
 
