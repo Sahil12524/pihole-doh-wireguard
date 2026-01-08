@@ -6,21 +6,50 @@
 #
 # Works great with Pi-hole + Cloudflared + WireGuard setups.
 
-# Containers to manage
-# CONTAINERS=("pihole" "wg-easy" "cloudflared" "hbbs" "hbbr")
-CONTAINERS=("pihole" "wg-easy" "cloudflared")
+# Absolute paths for systemd reliability
+PING="/usr/bin/ping"
+CURL="/usr/bin/curl"
+DOCKER="/usr/bin/docker"
+SYSTEMCTL="/usr/bin/systemctl"
+CPUP="cpupower"
+TUNED="tuned-adm"
 
-# Timing parameters
+# Containers to manage
+CONTAINERS=("pihole" "wg-easy" "cloudflared" "hbbs" "hbbr")
+
 LAST_STATE="online"
 CHECK_INTERVAL=2
 FAIL_COUNT=0
-THRESHOLD=5            # 5 consecutive fails = ~10s offline confirmation
 SUCCESS_COUNT=0
-RECOVERY_THRESHOLD=1   # 1 successful ping = fast recovery
+
+FAIL_THRESHOLD=5         # 10 seconds offline confirmation
+RECOVERY_THRESHOLD=1     # Fast recovery
+
+# RELIABLE HOSTS ONLY (1.1.1.1 removed!)
+PING_HOSTS=("8.8.8.8" "8.8.4.4" "www.google.com")
+HTTP_TEST="https://www.google.com"
+
+log() {
+    echo "[$(date '+%H:%M:%S')] $1"
+}
 
 check_internet() {
-    ping -c 1 -W 1 1.1.1.1 >/dev/null 2>&1
-    return $?
+    # ICMP tests using absolute ping
+    for HOST in "${PING_HOSTS[@]}"; do
+        if $PING -c 1 -W 1 -n "$HOST" >/dev/null 2>&1; then
+            return 0
+        else
+            log "Ping failed: $HOST"
+        fi
+    done
+
+    # HTTP fallback — very reliable
+    $CURL -s --max-time 2 "$HTTP_TEST" >/dev/null 2>&1
+    if [[ $? -eq 0 ]]; then
+        return 0
+    fi
+
+    return 1
 }
 
 check_power() {
@@ -29,64 +58,68 @@ check_power() {
 
 set_power_profile() {
     PROFILE=$1
-    if command -v cpupower >/dev/null 2>&1; then
-        cpupower frequency-set -g "$PROFILE" >/dev/null 2>&1
-    elif command -v tuned-adm >/dev/null 2>&1; then
-        tuned-adm profile "$PROFILE" >/dev/null 2>&1
+    if command -v $CPUP >/dev/null 2>&1; then
+        $CPUP frequency-set -g "$PROFILE" >/dev/null 2>&1
+    elif command -v $TUNED >/dev/null 2>&1; then
+        $TUNED profile "$PROFILE" >/dev/null 2>&1
     fi
 }
 
-log() {
-    echo "[$(date '+%H:%M:%S')] $1"
-}
-
 while true; do
+
+    # Internet detection
     if check_internet; then
         ((SUCCESS_COUNT++))
         FAIL_COUNT=0
     else
         ((FAIL_COUNT++))
         SUCCESS_COUNT=0
+        log "No internet detected ($FAIL_COUNT fails)"
     fi
 
     POWER=$(check_power)
 
-    # CPU governor logic
-    if ((FAIL_COUNT >= THRESHOLD)); then
+    # CPU scaling
+    if ((FAIL_COUNT >= FAIL_THRESHOLD)); then
         [[ "$POWER" -eq 0 ]] && PROFILE="powersave" || PROFILE="ondemand"
     else
         PROFILE="performance"
     fi
     set_power_profile "$PROFILE"
 
-    # If confirmed offline
-    if ((FAIL_COUNT >= THRESHOLD)) && [[ "$LAST_STATE" == "online" ]]; then
-        log "[+] Internet lost (after $FAIL_COUNT fails) — pausing containers..."
+    # OFFLINE → PAUSE CONTAINERS
+    if ((FAIL_COUNT >= FAIL_THRESHOLD)) && [[ "$LAST_STATE" == "online" ]]; then
+        log "[!] Internet offline — pausing containers..."
+
         for c in "${CONTAINERS[@]}"; do
-            STATE=$(docker inspect -f '{{.State.Paused}}' "$c" 2>/dev/null)
+            STATE=$($DOCKER inspect -f '{{.State.Paused}}' "$c" 2>/dev/null)
             if [[ "$STATE" == "false" ]]; then
                 log " → Pausing $c"
-                docker pause "$c"
+                $DOCKER pause "$c"
             fi
         done
 
+        # Suspend if on battery
         if [[ "$POWER" -eq 0 ]]; then
-            log "[+] On battery + no internet — suspending server."
-            systemctl suspend
+            log "[+] On battery & offline — suspending..."
+            $SYSTEMCTL suspend
         fi
+
         LAST_STATE="offline"
     fi
 
-    # Fast recovery when internet is back
+    # ONLINE → UNPAUSE CONTAINERS
     if ((SUCCESS_COUNT >= RECOVERY_THRESHOLD)) && [[ "$LAST_STATE" == "offline" ]]; then
-        log "[+] Internet back — unpausing containers instantly..."
+        log "[+] Internet restored — unpausing containers..."
+
         for c in "${CONTAINERS[@]}"; do
-            STATE=$(docker inspect -f '{{.State.Paused}}' "$c" 2>/dev/null)
+            STATE=$($DOCKER inspect -f '{{.State.Paused}}' "$c" 2>/dev/null)
             if [[ "$STATE" == "true" ]]; then
                 log " → Unpausing $c"
-                docker unpause "$c"
+                $DOCKER unpause "$c"
             fi
         done
+
         LAST_STATE="online"
     fi
 
